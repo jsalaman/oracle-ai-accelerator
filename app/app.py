@@ -20,21 +20,7 @@ import components as component
 import services.database as database
 import services as service
 import utils as utils
-
-
-
-language_map = {
-    "Spanish"    : "esa",
-    "Portuguese" : "ptb",
-    "English"    : "gb"
-}
-
-map_state = {
-    1: "Active",
-    2: "Inactive",
-    0: "Delete"
-}
-reverse_map_state = {v: k for k, v in map_state.items()}
+from utils.constants import language_map, map_state, reverse_map_state
 
 st.set_page_config(
     page_title="Oracle AI Accelerator",

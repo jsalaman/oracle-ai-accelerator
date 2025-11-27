@@ -92,7 +92,7 @@ class UserService:
         Returns:
             pd.DataFrame: A DataFrame containing user information.
         """
-        query = f"""
+        query = """
             SELECT
                 A.USER_ID,
                 A.USER_GROUP_ID,
@@ -140,7 +140,7 @@ class UserService:
         Returns:
             pd.DataFrame: A DataFrame containing the user's information.
         """
-        query = f"""
+        query = """
             SELECT
                 A.USER_ID,
                 A.USER_USERNAME,
@@ -152,9 +152,9 @@ class UserService:
                 A.USER_STATE,
                 A.USER_DATE
             FROM USERS A
-            WHERE A.USER_ID = {user_id}
+            WHERE A.USER_ID = :user_id
         """
-        return pd.read_sql(query, con=_self.conn)
+        return pd.read_sql(query, con=_self.conn, params={"user_id": user_id})
 
     def insert_user(
             self,
@@ -195,13 +195,13 @@ class UserService:
 
             if current_state != 1:
                 with self.conn.cursor() as cur:
-                    cur.execute(f"""
+                    cur.execute("""
                         UPDATE USERS 
-                        SET USER_MODULES = '{modules}',
+                        SET USER_MODULES = :modules,
                             USER_STATE   = 1,                            
                             USER_DATE    = SYSDATE
-                        WHERE USER_ID    = {user_id}
-                    """)
+                        WHERE USER_ID    = :user_id
+                    """, {"modules": modules, "user_id": int(user_id)})
                 self.conn.commit()
                 return f"User '{username}' already existed and has been reactivated.", user_id
             else:
@@ -209,7 +209,7 @@ class UserService:
         else:
             with self.conn.cursor() as cur:
                 user_id_var = cur.var(int)  # Define the output variable
-                cur.execute(f"""
+                cur.execute("""
                     INSERT INTO USERS (                        
                         USER_GROUP_ID,
                         USER_USERNAME,
@@ -220,16 +220,26 @@ class UserService:
                         USER_EMAIL,
                         USER_MODULES
                     ) VALUES (
-                        '{user_group_id}',
-                        '{username}',
-                        '{password}',
-                        '{sel_ai_password}',
-                        '{name}',
-                        '{last_name}',
-                        '{email}',
-                        '{modules}'
+                        :user_group_id,
+                        :username,
+                        :password,
+                        :sel_ai_password,
+                        :name,
+                        :last_name,
+                        :email,
+                        :modules
                     ) RETURNING USER_ID INTO :user_id
-                """, {"user_id": user_id_var})
+                """, {
+                    "user_group_id": user_group_id,
+                    "username": username,
+                    "password": password,
+                    "sel_ai_password": sel_ai_password,
+                    "name": name,
+                    "last_name": last_name,
+                    "email": email,
+                    "modules": modules,
+                    "user_id": user_id_var
+                })
             self.conn.commit()
             return f"User '{username}' has been created successfully.", user_id_var.getvalue()[0]
         
@@ -260,17 +270,26 @@ class UserService:
             str: A message indicating success.
         """
         with self.conn.cursor() as cur:
-            cur.execute(f"""
+            cur.execute("""
                 UPDATE USERS SET 
-                    USER_GROUP_ID  = {user_group_id},
-                    USER_USERNAME  = '{username}',
-                    USER_NAME      = '{name}',
-                    USER_LAST_NAME = '{last_name}',
-                    USER_EMAIL     = '{email}',
-                    USER_STATE     = {state},
-                    USER_MODULES   = '{modules}'
-                WHERE USER_ID      = {user_id}
-            """)
+                    USER_GROUP_ID  = :user_group_id,
+                    USER_USERNAME  = :username,
+                    USER_NAME      = :name,
+                    USER_LAST_NAME = :last_name,
+                    USER_EMAIL     = :email,
+                    USER_STATE     = :state,
+                    USER_MODULES   = :modules
+                WHERE USER_ID      = :user_id
+            """, {
+                "user_group_id": user_group_id,
+                "username": username,
+                "name": name,
+                "last_name": last_name,
+                "email": email,
+                "state": state,
+                "modules": modules,
+                "user_id": user_id
+            })
         self.conn.commit()
         return f"User '{username}' has been updated successfully."
         
@@ -291,15 +310,22 @@ class UserService:
             str: A message indicating success.
         """
         with self.conn.cursor() as cur:
-            cur.execute(f"""
+            cur.execute("""
                 UPDATE USERS SET 
-                    USER_NAME      = '{name}',
-                    USER_PASSWORD  = '{password}',
-                    USER_LAST_NAME = '{last_name}',
-                    USER_EMAIL     = '{email}',
-                    USER_STATE     = {state}
-                WHERE USER_ID      = {user_id}
-            """)
+                    USER_NAME      = :name,
+                    USER_PASSWORD  = :password,
+                    USER_LAST_NAME = :last_name,
+                    USER_EMAIL     = :email,
+                    USER_STATE     = :state
+                WHERE USER_ID      = :user_id
+            """, {
+                "name": name,
+                "password": password,
+                "last_name": last_name,
+                "email": email,
+                "state": state,
+                "user_id": user_id
+            })
         self.conn.commit()
         return f"User '{username}' has been updated successfully."
         
@@ -315,11 +341,11 @@ class UserService:
             str: A message indicating success.
         """
         with self.conn.cursor() as cur:
-            cur.execute(f"""
+            cur.execute("""
                 UPDATE USERS SET 
-                    USER_MODULES = '{modules}'
-                WHERE USER_ID    = {user_id}
-            """)
+                    USER_MODULES = :modules
+                WHERE USER_ID    = :user_id
+            """, {"modules": modules, "user_id": user_id})
         self.conn.commit()
         return f"User has been updated successfully."
 
@@ -342,9 +368,14 @@ class UserService:
 
             # 3. Eliminar AGENTS si ya no tienen más relaciones en AGENT_USER
             if agent_ids:
+                # We can't easily parameterize the IN clause with a list in one go without trickery or iterating.
+                # Since agent_ids comes from the database (integers), it's safe from injection, but for consistency:
+                # Oracle allows bindings in IN clause but it's variable number.
+                # Given we retrieved them as ints, it is safe to format them into the string.
+                agent_ids_str = ','.join(map(str, agent_ids))
                 cur.execute(f"""
                     DELETE FROM agents
-                    WHERE agent_id IN ({','.join(map(str, agent_ids))})
+                    WHERE agent_id IN ({agent_ids_str})
                     AND NOT EXISTS (
                         SELECT 1 FROM agent_user WHERE agent_id = agents.agent_id
                     )
@@ -363,9 +394,10 @@ class UserService:
 
             # 6. Eliminar DOCS de archivos si ya no están relacionados a ningún usuario
             if file_ids:
+                file_ids_str = ','.join(map(str, file_ids))
                 cur.execute(f"""
                     DELETE FROM docs
-                    WHERE file_id IN ({','.join(map(str, file_ids))})
+                    WHERE file_id IN ({file_ids_str})
                     AND NOT EXISTS (
                         SELECT 1 FROM file_user WHERE file_id = docs.file_id
                     )
@@ -374,7 +406,7 @@ class UserService:
                 # 7. Eliminar FILES si ya no están asociados a ningún usuario
                 cur.execute(f"""
                     DELETE FROM files
-                    WHERE file_id IN ({','.join(map(str, file_ids))})
+                    WHERE file_id IN ({file_ids_str})
                     AND NOT EXISTS (
                         SELECT 1 FROM file_user WHERE file_id = files.file_id
                     )
@@ -407,7 +439,7 @@ class UserService:
         Returns:
             pd.DataFrame: A DataFrame containing module information.
         """
-        query = f"""
+        query = """
             SELECT
                 A.USER_GROUP_ID,
                 A.USER_GROUP_NAME,
@@ -514,7 +546,7 @@ class UserService:
 
     @st.cache_data
     def get_all_user_group_shared(_self, user_id):
-        query = f"""
+        query = """
             SELECT
                 A.USER_ID,
                 A.USER_GROUP_ID,
@@ -530,10 +562,10 @@ class UserService:
                 ON A.USER_GROUP_ID = B.USER_GROUP_ID
             WHERE
                 A.USER_STATE <> 0
-                AND A.USER_ID <> {user_id}
+                AND A.USER_ID <> :user_id
                 AND A.USER_GROUP_ID = (
-                    SELECT USER_GROUP_ID FROM USERS WHERE USER_ID = {user_id}
+                    SELECT USER_GROUP_ID FROM USERS WHERE USER_ID = :user_id_sub
                 )
             ORDER BY A.USER_ID DESC
         """
-        return pd.read_sql(query, con=_self.conn)
+        return pd.read_sql(query, con=_self.conn, params={"user_id": user_id, "user_id_sub": user_id})

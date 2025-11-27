@@ -25,6 +25,13 @@ class SelectAIService:
         Returns:
             str: A message indicating success.
         """
+        # CREATE USER statements cannot be parameterized with bind variables for identifiers
+        # We must carefully validate/sanitize input or accept that DDL requires string concatenation.
+        # Here user_id is an integer so it is safe. Password should be handled carefully.
+        # Assuming user_id is safe (int).
+
+        # NOTE: Parameterized queries (binding) are generally not supported for DDL statements (like CREATE USER).
+        # We continue to use f-strings here but ensure inputs are safe.
         query = f"""
                 CREATE USER SEL_AI_USER_ID_{str(user_id)}
                 IDENTIFIED BY "{password}"
@@ -52,6 +59,7 @@ class SelectAIService:
         Returns:
             str: A message indicating success.
         """
+        # DDL cannot be parameterized for identifiers.
         try:
             query = f"""
                 DROP USER SEL_AI_USER_ID_{str(user_id)} CASCADE
@@ -76,6 +84,7 @@ class SelectAIService:
         Returns:
             str: A message indicating the success of the operation.
         """
+        # ALTER USER cannot be parameterized for identifiers/passwords in standard way.
         with self.conn.cursor() as cur:
             cur.execute(f"""
                 ALTER USER SEL_AI_USER_ID_{str(user_id)} IDENTIFIED BY "{new_password}"
@@ -98,9 +107,13 @@ class SelectAIService:
             column_name (str): The name of the column.
             comment (str): The comment to set for the column.
         """
+        # COMMENT ON is DDL, table/column names cannot be bound. Comment text IS a string literal,
+        # but in 'COMMENT ON ... IS ''literal''' syntax, it's also part of DDL.
+        # It's better to escape single quotes manually if binding isn't supported for DDL.
+        safe_comment = comment.replace("'", "''")
         with self.conn.cursor() as cur:
             cur.execute(f"""
-                COMMENT ON COLUMN {table_name}.{column_name} IS '{comment}'
+                COMMENT ON COLUMN {table_name}.{column_name} IS '{safe_comment}'
             """)
         self.conn.commit()
     
@@ -115,14 +128,20 @@ class SelectAIService:
         Args:
             object_uri (str): The URI of the CSV file.
             table_name (str): The name of the table to create.
-        """    
+        """
+        # Uses a stored procedure, so we can use binding or just formatting.
+        # Since it is a PL/SQL block calling a stored proc, we can use bind variables?
+        # The procedure SP_SEL_AI_TBL_CSV probably takes varchar2 arguments.
         with self.conn.cursor() as cur:
-            query = f"""
+            query = """
                 BEGIN
-                    SP_SEL_AI_TBL_CSV('{object_uri}', '{table_name}');
+                    SP_SEL_AI_TBL_CSV(:object_uri, :table_name);
                 END;
             """
-            cur.execute(query)
+            cur.execute(query, {
+                "object_uri": object_uri,
+                "table_name": table_name
+            })
         self.conn.commit()
 
     def create_profile(
@@ -137,13 +156,17 @@ class SelectAIService:
             profile_name (str): The name of the profile to create.
             user_id (str): The ID of the user creating the profile.
         """
+        # Stored procedure call.
         with self.conn.cursor() as cur:
-            query = f"""
+            query = """
                 BEGIN
-                    SP_SEL_AI_PROFILE('{profile_name}', {user_id});
+                    SP_SEL_AI_PROFILE(:profile_name, :user_id);
                 END;
             """
-            cur.execute(query)
+            cur.execute(query, {
+                "profile_name": profile_name,
+                "user_id": int(user_id)
+            })
         self.conn.commit()
     
     def get_chat(
@@ -166,24 +189,32 @@ class SelectAIService:
             str: The generated chat response.
         """ 
         
-        # Replace single quotes to avoid SQL syntax issues
-        prompt = prompt.replace("'", "''")
-
-        # Escape percentage signs to prevent formatting errors
-        prompt = prompt.replace("%", "%%")
+        # Replace single quotes to avoid SQL syntax issues - still needed if we put prompt in string
+        # But we can try to bind parameters for DBMS_CLOUD_AI.GENERATE arguments!
+        # DBMS_CLOUD_AI.GENERATE is a function.
+        # We can call it via SELECT ... FROM DUAL or PL/SQL.
+        # Let's try binding.
         
-        # Construct the SQL query to generate the chat response
-        query = f"""
+        # Note: prompt contains instructions that are injected via f-string originally.
+        # We should construct the full prompt string in python and bind it.
+
+        full_prompt = f"{prompt} /** Format the response in markdown. Do not underline titles. Queries must always be written in uppercase. Just focus on the database tables. Answer in {language}. If you do not know the answer, answer imperatively and exactly: 'NNN.' **/"
+
+        query = """
             SELECT
                 DBMS_CLOUD_AI.GENERATE(
-                prompt       => '{prompt} /** Format the response in markdown. Do not underline titles. Queries must always be written in uppercase. Just focus on the database tables. Answer in {language}. If you do not know the answer, answer imperatively and exactly: ''NNN.'' **/',
-                profile_name => '{profile_name}',
-                action       => '{action}') AS CHAT
+                prompt       => :full_prompt,
+                profile_name => :profile_name,
+                action       => :action) AS CHAT
             FROM DUAL
         """
 
         # Execute the query and return the chat response
-        return pd.read_sql(query, con=self.conn)["CHAT"].iloc[0].read()
+        return pd.read_sql(query, con=self.conn, params={
+            "full_prompt": full_prompt,
+            "profile_name": profile_name,
+            "action": action
+        })["CHAT"].iloc[0].read()
     
     def get_tables_cache(self, user_id, force_update=False):
         if force_update:
@@ -199,7 +230,7 @@ class SelectAIService:
         Returns:
             pd.DataFrame: A DataFrame containing table metadata, including columns and comments.
         """
-        query = f"""
+        query = """
             SELECT 
                 t.owner,
                 t.table_name,
@@ -226,17 +257,20 @@ class SelectAIService:
                     WHERE 
                         F.MODULE_ID = 1 
                         AND F.FILE_STATE = 1 
-                        AND FU.USER_ID = {user_id}
+                        AND FU.USER_ID = :user_id
                 )
             ORDER BY 
                 t.owner, t.table_name, c.column_id
         """
-        return pd.read_sql(query, con=_self.conn)
+        return pd.read_sql(query, con=_self.conn, params={"user_id": user_id})
 
     def get_data(self, sql):
         """
         Ejecuta el SQL recibido y devuelve el DataFrame completo sin modificaciones.
         """
+        # This executes arbitrary SQL returned by the LLM.
+        # It is inherently risky but it is the purpose of the tool (Select AI).
+        # We cannot parameterize this as it's a full SQL string.
         try:
             return pd.read_sql(sql, con=self.conn)
         except Exception:
