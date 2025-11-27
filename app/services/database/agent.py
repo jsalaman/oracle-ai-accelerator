@@ -33,7 +33,7 @@ class AgentService:
         Returns:
             pd.DataFrame: List of agents assigned to user_id with model details.
         """
-        query = f"""
+        query = """
             SELECT 
                 A.AGENT_ID,
                 A.AGENT_MODEL_ID,
@@ -73,7 +73,7 @@ class AgentService:
             JOIN
                 AGENT_USER AU1
                 ON AU1.AGENT_ID = A.AGENT_ID
-                AND AU1.USER_ID = {user_id}
+                AND AU1.USER_ID = :user_id
             JOIN
                 USERS U1
                 ON U1.USER_ID = AU1.USER_ID
@@ -89,7 +89,7 @@ class AgentService:
             ORDER BY 
                 A.AGENT_ID DESC
         """
-        return pd.read_sql(query, con=_self.conn)
+        return pd.read_sql(query, con=_self.conn, params={"user_id": user_id})
 
     def copy_agent_to_admin(self, user_id):
         """
@@ -231,11 +231,11 @@ class AgentService:
         """
 
         # Primero validar si ya existe un agente con el mismo nombre
-        query = f"""
+        query = """
             SELECT 1 FROM AGENTS
-            WHERE AGENT_NAME = '{agent_name}'
+            WHERE AGENT_NAME = :agent_name
         """
-        df = pd.read_sql(query, con=self.conn)
+        df = pd.read_sql(query, con=self.conn, params={"agent_name": agent_name})
 
         if not df.empty:
             raise ValueError(f"Agent '{agent_name}' already exists. Please choose a different name.")
@@ -243,7 +243,7 @@ class AgentService:
         # Insertamos el nuevo agente
         with self.conn.cursor() as cur:
             agent_id_var = cur.var(int)
-            cur.execute(f"""
+            cur.execute("""
                 INSERT INTO AGENTS (
                     AGENT_MODEL_ID,
                     AGENT_NAME,
@@ -258,20 +258,30 @@ class AgentService:
                     AGENT_PROMPT_SYSTEM,
                     AGENT_PROMPT_MESSAGE
                 ) VALUES (
-                    {agent_model_id},
-                    '{agent_name}',
-                    '{agent_description}',
-                    '{agent_type}',
-                    {agent_max_out_tokens},
-                    {agent_temperature},
-                    {agent_top_p},
-                    {agent_top_k},
-                    {agent_frequency_penalty},
-                    {agent_presence_penalty},
+                    :agent_model_id,
+                    :agent_name,
+                    :agent_description,
+                    :agent_type,
+                    :agent_max_out_tokens,
+                    :agent_temperature,
+                    :agent_top_p,
+                    :agent_top_k,
+                    :agent_frequency_penalty,
+                    :agent_presence_penalty,
                     :agent_prompt_system,
                     :agent_prompt_message
                 ) RETURNING AGENT_ID INTO :agent_id
             """, {
+                "agent_model_id": agent_model_id,
+                "agent_name": agent_name,
+                "agent_description": agent_description,
+                "agent_type": agent_type,
+                "agent_max_out_tokens": agent_max_out_tokens,
+                "agent_temperature": agent_temperature,
+                "agent_top_p": agent_top_p,
+                "agent_top_k": agent_top_k,
+                "agent_frequency_penalty": agent_frequency_penalty,
+                "agent_presence_penalty": agent_presence_penalty,
                 "agent_prompt_system": agent_prompt_system,
                 "agent_prompt_message": agent_prompt_message,
                 "agent_id": agent_id_var
@@ -282,10 +292,13 @@ class AgentService:
 
         # Insertamos la relación AGENT_USER
         with self.conn.cursor() as cur:
-            cur.execute(f"""
+            cur.execute("""
                 INSERT INTO AGENT_USER (AGENT_ID, USER_ID)
-                VALUES ({agent_id}, {user_id})
-            """)
+                VALUES (:agent_id, :user_id)
+            """, {
+                "agent_id": int(agent_id),
+                "user_id": int(user_id)
+            })
         self.conn.commit()
 
         return f"Agent '{agent_name}' has been created successfully.", agent_id
@@ -325,7 +338,7 @@ class AgentService:
             str: A message indicating success.
         """
         with self.conn.cursor() as cur:
-            cur.execute(f"""
+            cur.execute("""
                 UPDATE AGENTS SET 
                     AGENT_MODEL_ID          = :agent_model_id,
                     AGENT_NAME              = :agent_name,
@@ -386,7 +399,7 @@ class AgentService:
         Returns:
             pd.DataFrame: Shared AGENT_USER records (excluding agents belonging to user_id).
         """
-        query = f"""
+        query = """
             SELECT 
                 FU.AGENT_USER_ID,
                 FU.AGENT_ID,
@@ -409,10 +422,10 @@ class AgentService:
             JOIN USER_GROUP UG
                 ON U.USER_GROUP_ID = UG.USER_GROUP_ID
             WHERE
-                FU.USER_ID <> {user_id}
+                FU.USER_ID <> :user_id
                 AND FU.OWNER <> 1
                 AND F.AGENT_STATE <> 0
             ORDER BY
                 FU.AGENT_USER_ID
         """
-        return pd.read_sql(query, con=_self.conn)
+        return pd.read_sql(query, con=_self.conn, params={"user_id": user_id})

@@ -22,7 +22,7 @@ class ModuleService:
         Returns:
             pd.DataFrame: A DataFrame containing module information.
         """
-        query = f"""
+        query = """
             SELECT 
                 M.MODULE_ID,
                 M.MODULE_NAME,
@@ -53,7 +53,7 @@ class ModuleService:
         Returns:
             pd.DataFrame: A DataFrame containing MODULE_ID and MODULE_NAME.
         """
-        query = f"""
+        query = """
             SELECT 
                 M.MODULE_ID,
                 M.MODULE_NAME,
@@ -70,12 +70,12 @@ class ModuleService:
             ON 1=1
             JOIN MODULES M
             ON JT.MODULE_ID = M.MODULE_ID
-            WHERE U.USER_ID = {user_id}
+            WHERE U.USER_ID = :user_id
             AND M.MODULE_STATE = 1
             AND M.MODULE_ID > 0
             ORDER BY M.MODULE_ID
         """
-        return pd.read_sql(query, con=_self.conn)
+        return pd.read_sql(query, con=_self.conn, params={"user_id": user_id})
 
     
     def get_modules_files_cache(self, user_id, force_update=False):
@@ -95,7 +95,7 @@ class ModuleService:
         Returns:
             pd.DataFrame: A DataFrame containing module information.
         """
-        query = f"""
+        query = """
             SELECT DISTINCT
                 M.MODULE_ID,
                 M.MODULE_NAME,
@@ -120,9 +120,9 @@ class ModuleService:
             WHERE
                 M.MODULE_VECTOR_STORE = 1
                 AND F.FILE_STATE = 1
-                AND FU.USER_ID = {user_id}
+                AND FU.USER_ID = :user_id
         """
-        return pd.read_sql(query, con=_self.conn)
+        return pd.read_sql(query, con=_self.conn, params={"user_id": user_id})
 
     def update_agent(
             self,
@@ -159,23 +159,35 @@ class ModuleService:
         Returns:
             str: A message indicating success.
         """
-        query = f"""
+        query = """
             UPDATE AGENTS SET 
-                MODEL_ID                = {model_id},
-                AGENT_MAX_OUT_TOKENS    = {agent_max_out_tokens},
-                AGENT_TEMPERATURE       = {agent_temperature},
-                AGENT_TOP_P             = {agent_top_p},
-                AGENT_TOP_K             = {agent_top_k},
-                AGENT_FREQUENCY_PENALTY = {agent_frequency_penalty},
-                AGENT_PRESENCE_PENALTY  = {agent_presence_penalty},
-                AGENT_PROMPT_SYSTEM     = '{agent_prompt_system.replace("'", "''")}',
-                AGENT_PROMPT_MESSAGE    = '{agent_prompt_message.replace("'", "''")}'
+                MODEL_ID                = :model_id,
+                AGENT_MAX_OUT_TOKENS    = :agent_max_out_tokens,
+                AGENT_TEMPERATURE       = :agent_temperature,
+                AGENT_TOP_P             = :agent_top_p,
+                AGENT_TOP_K             = :agent_top_k,
+                AGENT_FREQUENCY_PENALTY = :agent_frequency_penalty,
+                AGENT_PRESENCE_PENALTY  = :agent_presence_penalty,
+                AGENT_PROMPT_SYSTEM     = :agent_prompt_system,
+                AGENT_PROMPT_MESSAGE    = :agent_prompt_message
             WHERE
-                AGENT_ID         = {agent_id}
-                AND USER_ID      = {user_id}
+                AGENT_ID         = :agent_id
+                AND USER_ID      = :user_id
         """
         with self.conn.cursor() as cur:
-            cur.execute(query)
+            cur.execute(query, {
+                "model_id": model_id,
+                "agent_max_out_tokens": agent_max_out_tokens,
+                "agent_temperature": agent_temperature,
+                "agent_top_p": agent_top_p,
+                "agent_top_k": agent_top_k,
+                "agent_frequency_penalty": agent_frequency_penalty,
+                "agent_presence_penalty": agent_presence_penalty,
+                "agent_prompt_system": agent_prompt_system,
+                "agent_prompt_message": agent_prompt_message,
+                "agent_id": agent_id,
+                "user_id": user_id
+            })
         self.conn.commit()
         return f"Agent '{agent_name}' has been updated successfully."
     
@@ -185,12 +197,16 @@ class ModuleService:
         Returns:
             str: A message indicating success.
         """
-        query = f"""
-            DELETE FROM AGENTS WHERE USER_ID = {user_id} AND MODULE_ID = {module_id}
+        query = """
+            DELETE FROM AGENTS WHERE USER_ID = :user_id AND MODULE_ID = :module_id
             RETURNING AGENT_NAME INTO :agent_name
         """
         with self.conn.cursor() as cur:
             agent_name_var = cur.var(str)
-            cur.execute(query, {"agent_name": agent_name_var})
+            cur.execute(query, {
+                "user_id": user_id,
+                "module_id": module_id,
+                "agent_name": agent_name_var
+            })
         self.conn.commit()
         return f"Agent: :red[{agent_name_var.getvalue()[0]}] has been deleted successfully."

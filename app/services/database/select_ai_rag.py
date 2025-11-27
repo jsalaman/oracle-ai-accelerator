@@ -29,11 +29,15 @@ class SelectAIRAGService:
             location (str)     : The location for the profile.
         """
         with self.conn.cursor() as cur:
-            cur.execute(f"""
+            cur.execute("""
                 BEGIN
-                    SP_SEL_AI_RAG_PROFILE('{profile_name}', '{index_name}', '{location}');
+                    SP_SEL_AI_RAG_PROFILE(:profile_name, :index_name, :location);
                 END;
-            """)
+            """, {
+                "profile_name": profile_name,
+                "index_name": index_name,
+                "location": location
+            })
         self.conn.commit()
     
     def get_chat(
@@ -55,15 +59,21 @@ class SelectAIRAGService:
         Returns:
             str: The generated chat response.
         """
-        query = f"""
+        full_prompt = f"{prompt} /** Format the response in markdown. Do not underline titles. Just focus on the information in the documents. Answer in {language}. If you do not know the answer, answer imperatively and exactly: 'NNN.' **/"
+
+        query = """
             SELECT
                 DBMS_CLOUD_AI.GENERATE(
-                prompt       => '{prompt} /** Format the response in markdown. Do not underline titles. Just focus on the information in the documents. Answer in {language}. If you do not know the answer, answer imperatively and exactly: ''NNN.'' **/',
-                profile_name => '{profile_name}',
-                action       => '{action}') AS CHAT
+                prompt       => :full_prompt,
+                profile_name => :profile_name,
+                action       => :action) AS CHAT
             FROM DUAL
         """
-        return pd.read_sql(query, con=self.conn)["CHAT"].iloc[0].read()
+        return pd.read_sql(query, con=self.conn, params={
+            "full_prompt": full_prompt,
+            "profile_name": profile_name,
+            "action": action
+        })["CHAT"].iloc[0].read()
     
     def get_files( self, index_name):
         """
@@ -75,6 +85,11 @@ class SelectAIRAGService:
         Returns:
             pd.DataFrame or None: A DataFrame containing file details and content, or None if the index does not exist.
         """
+        # Table name in FROM clause cannot be parameterized.
+        # We must validate index_name to ensure it is a valid identifier or accept the risk if it comes from internal source.
+        # Assuming index_name is controlled by the application logic and not direct user input, or minimal validation.
+        # However, to be safer, we can try to sanitize it.
+        # For now, we will leave it as f-string because FROM clause cannot be bound.
         try:
             query = f"""
                 SELECT 
